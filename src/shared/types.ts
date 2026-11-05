@@ -71,6 +71,12 @@ export interface InitialState {
 
 export type MenuCommand = 'open-folder' | 'save' | 'save-as'
 
+export interface PreviewStatus {
+  position: number
+  duration: number
+  playing: boolean
+}
+
 export interface SmsApi {
   loadInitial(): Promise<InitialState>
   openFolder(): Promise<LibrarySnapshot | null>
@@ -79,8 +85,12 @@ export interface SmsApi {
   save(file: SetFile): Promise<SetFile>
   saveAs(draft: SetDraft): Promise<SetFile>
   openSet(fileId: string): Promise<SetFile>
-  mediaUrl(filePath: string): Promise<string>
-  mediaBytes(filePath: string): Promise<ArrayBuffer | Uint8Array>
+  previewLoad(filePath: string, durationHint: number): Promise<PreviewStatus>
+  previewPlay(): Promise<PreviewStatus>
+  previewPause(): Promise<PreviewStatus>
+  previewSeek(seconds: number): Promise<PreviewStatus>
+  previewVolume(level: number): Promise<PreviewStatus>
+  previewStatus(): Promise<PreviewStatus>
   onScanProgress(listener: (progress: ScanProgress) => void): () => void
   onMenuCommand(listener: (command: MenuCommand) => void): () => void
 }

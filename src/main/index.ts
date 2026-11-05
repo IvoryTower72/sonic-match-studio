@@ -12,7 +12,7 @@ import {
 } from 'electron'
 import { MediaGate } from './access.js'
 import { refreshSavedTracks, scanLibrary } from './library.js'
-import { startPreviewServer, type PreviewServer } from './preview-server.js'
+import { createPreviewPlayer, type PreviewPlayer } from './player.js'
 import { createSet, listSets, overwriteSet, readSet } from './sets.js'
 import type { LibrarySnapshot, MenuCommand, SetDraft, SetFile } from '../shared/types.js'
 
@@ -28,7 +28,7 @@ const rendererHtml = path.join(appRoot, 'dist/renderer/index.html')
 const isDev = process.argv.includes('--dev')
 
 const gate = new MediaGate()
-let previewServer: PreviewServer | null = null
+let previewPlayer: PreviewPlayer | null = null
 let windowRef: BrowserWindow | null = null
 let setsDirectory = ''
 let userData = ''
@@ -83,15 +83,11 @@ async function openLibrary(folder: string): Promise<LibrarySnapshot> {
   return snapshot
 }
 
-function installContentSecurityPolicy(previewOrigin: string): void {
+function installContentSecurityPolicy(): void {
   const policy = isDev
-    ? `default-src 'self' http://127.0.0.1:5173; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://127.0.0.1:5173; style-src 'self' 'unsafe-inline' http://127.0.0.1:5173; connect-src 'self' ws://127.0.0.1:5173 http://127.0.0.1:5173; media-src 'self' ${previewOrigin} http://127.0.0.1:5173; img-src 'self' data:`
-    : `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self' ${previewOrigin}; img-src 'self' data:`
+    ? `default-src 'self' http://127.0.0.1:5173; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://127.0.0.1:5173; style-src 'self' 'unsafe-inline' http://127.0.0.1:5173; connect-src 'self' ws://127.0.0.1:5173 http://127.0.0.1:5173; img-src 'self' data:`
+    : `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:`
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    if (details.url.startsWith(previewOrigin)) {
-      callback(details.responseHeaders ? { responseHeaders: details.responseHeaders } : {})
-      return
-    }
     callback({
       responseHeaders: {
         ...details.responseHeaders,
@@ -99,6 +95,17 @@ function installContentSecurityPolicy(previewOrigin: string): void {
       },
     })
   })
+}
+
+function nativeParent(): string | null {
+  if (process.platform !== 'win32' || !windowRef || windowRef.isDestroyed()) return null
+  try {
+    const handle = windowRef.getNativeWindowHandle()
+    const value = handle.length >= 8 ? handle.readBigUInt64LE(0) : BigInt(handle.readUInt32LE(0))
+    return value > 0n ? value.toString() : null
+  } catch {
+    return null
+  }
 }
 
 function buildMenu(win: BrowserWindow): void {
@@ -170,7 +177,7 @@ function createWindow(): BrowserWindow {
   return win
 }
 
-function registerIpc(preview: PreviewServer): void {
+function registerIpc(player: PreviewPlayer): void {
   ipcMain.handle('app:load', async () => {
     await startupScan
     return {
@@ -221,27 +228,38 @@ function registerIpc(preview: PreviewServer): void {
     return { ...file, tracks }
   })
 
-  ipcMain.handle('media:url', async (_event, filePath: unknown) => {
-    if (typeof filePath !== 'string') throw new Error('That track has no file.')
-    if (!gate.resolve(filePath)) throw new Error('That file is not in the open folder or the open set.')
-    return preview.urlFor(filePath)
+  ipcMain.handle('preview:load', async (_event, filePath: unknown, durationHint: unknown) => {
+    const resolved = requirePreviewFile(filePath)
+    const hint = typeof durationHint === 'number' && Number.isFinite(durationHint) ? durationHint : 0
+    return player.load(resolved, hint)
   })
 
-  ipcMain.handle('media:bytes', async (_event, filePath: unknown) => {
-    if (typeof filePath !== 'string') throw new Error('That track has no file.')
-    const resolved = gate.resolve(filePath)
-    if (!resolved) throw new Error('That file is not in the open folder or the open set.')
-    const file = await fs.promises.readFile(resolved)
-    return file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength)
+  ipcMain.handle('preview:play', async () => player.play())
+  ipcMain.handle('preview:pause', async () => player.pause())
+  ipcMain.handle('preview:seek', async (_event, seconds: unknown) => {
+    if (typeof seconds !== 'number' || !Number.isFinite(seconds)) throw new Error('That position cannot be played.')
+    return player.seek(seconds)
   })
+  ipcMain.handle('preview:volume', async (_event, level: unknown) => {
+    if (typeof level !== 'number' || !Number.isFinite(level)) throw new Error('That volume cannot be used.')
+    return player.volume(level)
+  })
+  ipcMain.handle('preview:status', async () => player.status())
+}
+
+function requirePreviewFile(filePath: unknown): string {
+  if (typeof filePath !== 'string') throw new Error('That track has no file.')
+  const resolved = gate.resolve(filePath)
+  if (!resolved) throw new Error('That file is not in the open folder or the open set.')
+  return resolved
 }
 
 void app.whenReady().then(async () => {
   userData = app.getPath('userData')
   setsDirectory = path.join(userData, 'sets')
-  previewServer = await startPreviewServer(gate)
-  installContentSecurityPolicy(previewServer.origin)
-  registerIpc(previewServer)
+  previewPlayer = createPreviewPlayer(nativeParent)
+  installContentSecurityPolicy()
+  registerIpc(previewPlayer)
 
   const requested = cliFlag('--library') ?? readSavedFolder() ?? process.env.SMS_LIBRARY ?? null
   if (requested && fs.existsSync(requested)) {
@@ -264,5 +282,5 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
-  void previewServer?.close().catch(() => undefined)
+  void previewPlayer?.close().catch(() => undefined)
 })

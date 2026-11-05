@@ -3,6 +3,7 @@ import type {
   InitialState,
   LibrarySnapshot,
   MenuCommand,
+  PreviewStatus,
   ScanProgress,
   SetDraft,
   SetFile,
@@ -17,8 +18,13 @@ const api = {
   save: (file: SetFile): Promise<SetFile> => ipcRenderer.invoke('sets:save', file),
   saveAs: (draft: SetDraft): Promise<SetFile> => ipcRenderer.invoke('sets:save-as', draft),
   openSet: (fileId: string): Promise<SetFile> => ipcRenderer.invoke('sets:open', fileId),
-  mediaUrl: (filePath: string): Promise<string> => ipcRenderer.invoke('media:url', filePath),
-  mediaBytes: (filePath: string): Promise<ArrayBuffer | Uint8Array> => ipcRenderer.invoke('media:bytes', filePath),
+  previewLoad: (filePath: string, durationHint: number): Promise<PreviewStatus> =>
+    ipcRenderer.invoke('preview:load', filePath, durationHint),
+  previewPlay: (): Promise<PreviewStatus> => ipcRenderer.invoke('preview:play'),
+  previewPause: (): Promise<PreviewStatus> => ipcRenderer.invoke('preview:pause'),
+  previewSeek: (seconds: number): Promise<PreviewStatus> => ipcRenderer.invoke('preview:seek', seconds),
+  previewVolume: (level: number): Promise<PreviewStatus> => ipcRenderer.invoke('preview:volume', level),
+  previewStatus: (): Promise<PreviewStatus> => ipcRenderer.invoke('preview:status'),
   onScanProgress: (listener: (progress: ScanProgress) => void): (() => void) => {
     const wrapped = (_event: IpcRendererEvent, progress: ScanProgress) => listener(progress)
     ipcRenderer.on('library:progress', wrapped)

@@ -1,14 +1,11 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
-import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { MediaGate, isInside } from '../src/main/access.ts'
 import { scanLibrary } from '../src/main/library.ts'
-import { mediaUrlFor, pathFromMediaUrl, serveMedia } from '../src/main/media.ts'
-import { startPreviewServer } from '../src/main/preview-server.ts'
 import { createSet, listSets, overwriteSet, readSet } from '../src/main/sets.ts'
 import { sampleTrack } from './sample.ts'
 
@@ -62,99 +59,6 @@ test('save overwrites one file and save as leaves the original bytes alone', () 
   fs.rmSync(directory, { recursive: true, force: true })
 })
 
-test('media urls round-trip and ranges are read without writing the file', async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sms-media-'))
-  const filePath = path.join(directory, 'Café track.mp3')
-  const bytes = Buffer.from('0123456789abcdef-preview-bytes')
-  fs.writeFileSync(filePath, bytes)
-  const before = hash(filePath)
-  const outside = path.join(os.tmpdir(), `sms-secret-${process.pid}.mp3`)
-  fs.writeFileSync(outside, 'secret')
-  const outsideHash = hash(outside)
-
-  const url = mediaUrlFor(filePath)
-  assert.equal(pathFromMediaUrl(url), filePath)
-  assert.equal(pathFromMediaUrl(mediaUrlFor('C:\\Music\\5A - 127 - Otam.mp3')), 'C:\\Music\\5A - 127 - Otam.mp3')
-
-  const gate = new MediaGate()
-  gate.setRoot(directory)
-  const partial = await serveMedia(new Request(url, { headers: { Range: 'bytes=0-3' } }), gate)
-  assert.equal(partial.status, 206)
-  assert.equal(partial.headers.get('content-range'), `bytes 0-3/${bytes.length}`)
-  assert.equal(partial.headers.get('content-length'), '4')
-  assert.equal(Buffer.from(await partial.arrayBuffer()).toString(), '0123')
-  const openEnded = await serveMedia(new Request(url, { headers: { Range: 'bytes=0-' } }), gate)
-  assert.equal(openEnded.status, 200)
-  assert.equal(openEnded.headers.get('content-type'), 'audio/mpeg')
-  assert.equal(openEnded.headers.get('content-range'), null)
-  assert.equal(openEnded.headers.get('content-length'), String(bytes.length))
-  assert.equal(openEnded.headers.get('cache-control'), null)
-  assert.equal(Buffer.from(await openEnded.arrayBuffer()).compare(bytes), 0)
-  const whole = await serveMedia(new Request(url), gate)
-  assert.equal(whole.status, 200)
-  assert.equal(whole.headers.get('content-length'), String(bytes.length))
-  assert.equal(Buffer.from(await whole.arrayBuffer()).compare(bytes), 0)
-  const bulkyPath = path.join(directory, 'bulky.mp3')
-  const bulky = Buffer.alloc(256 * 1024, 7)
-  fs.writeFileSync(bulkyPath, bulky)
-  const bulkyBefore = hash(bulkyPath)
-  const bulkyUrl = mediaUrlFor(bulkyPath)
-  const bulkyRange = await serveMedia(new Request(bulkyUrl, { headers: { Range: 'bytes=1000-5000' } }), gate)
-  assert.equal(bulkyRange.status, 206)
-  assert.equal(Buffer.from(await bulkyRange.arrayBuffer()).compare(bulky.subarray(1000, 5001)), 0)
-  assert.equal(hash(bulkyPath), bulkyBefore)
-  const denied = await serveMedia(new Request(mediaUrlFor(outside)), gate)
-  assert.equal(denied.status, 404)
-  const posted = await serveMedia(new Request(url, { method: 'POST' }), gate)
-  assert.equal(posted.status, 405)
-  assert.equal(hash(filePath), before)
-  assert.equal(hash(outside), outsideHash)
-  fs.rmSync(directory, { recursive: true, force: true })
-  fs.rmSync(outside, { force: true })
-})
-
-test('preview http on 127.0.0.1 returns the file bytes and does not write them', async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sms-http-'))
-  const nested = path.join(directory, 'New folder (4)', 'Otam (original mix).mp3')
-  fs.mkdirSync(path.dirname(nested), { recursive: true })
-  const bytes = Buffer.from('0123456789abcdef-preview-bytes')
-  fs.writeFileSync(nested, bytes)
-  const before = hash(nested)
-  const outside = path.join(os.tmpdir(), `sms-http-outside-${process.pid}.mp3`)
-  fs.writeFileSync(outside, 'secret')
-  const gate = new MediaGate()
-  gate.setRoot(directory)
-  const server = await startPreviewServer(gate)
-  try {
-    const url = new URL(server.urlFor(nested))
-    assert.equal(url.hostname, '127.0.0.1')
-    assert.match(url.pathname, /^\/track\//)
-    const partial = await requestPreview(url, { Range: 'bytes=0-3' })
-    assert.equal(partial.status, 206)
-    assert.equal(partial.headers['content-type'], 'audio/mpeg')
-    assert.equal(partial.headers['content-range'], `bytes 0-3/${bytes.length}`)
-    assert.equal(partial.headers['accept-ranges'], 'bytes')
-    assert.equal(partial.headers['content-length'], '4')
-    assert.equal(partial.body.toString(), '0123')
-    const open = await requestPreview(url, { Range: 'bytes=0-' })
-    assert.equal(open.status, 200)
-    assert.equal(open.headers['content-range'], undefined)
-    assert.equal(open.headers['content-type'], 'audio/mpeg')
-    assert.equal(open.body.compare(bytes), 0)
-    const whole = await requestPreview(url, {})
-    assert.equal(whole.status, 200)
-    assert.equal(whole.headers['content-length'], String(bytes.length))
-    assert.equal(whole.body.compare(bytes), 0)
-    const denied = await requestPreview(new URL(server.urlFor(outside)), {})
-    assert.equal(denied.status, 404)
-  } finally {
-    await server.close()
-  }
-  assert.equal(hash(nested), before)
-  fs.rmSync(directory, { recursive: true, force: true })
-  fs.rmSync(outside, { force: true })
-})
-
 test('a folder scan keeps audio inside the folder and skips a link that points out', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sms-scan-'))
   const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sms-linked-'))
@@ -175,22 +79,4 @@ test('a folder scan keeps audio inside the folder and skips a link that points o
 
 function hash(filePath: string): string {
   return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
-}
-
-function requestPreview(url: URL, headers: http.OutgoingHttpHeaders): Promise<{ status: number, headers: http.IncomingHttpHeaders, body: Buffer }> {
-  return new Promise((resolve, reject) => {
-    const request = http.request(url, { headers }, (response) => {
-      const chunks: Buffer[] = []
-      response.on('data', (chunk: Buffer) => chunks.push(chunk))
-      response.on('end', () => {
-        resolve({
-          status: response.statusCode ?? 0,
-          headers: response.headers,
-          body: Buffer.concat(chunks),
-        })
-      })
-    })
-    request.on('error', reject)
-    request.end()
-  })
 }
