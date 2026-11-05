@@ -89,7 +89,7 @@ function installContentSecurityPolicy(previewOrigin: string): void {
     : `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self' ${previewOrigin}; img-src 'self' data:`
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     if (details.url.startsWith(previewOrigin)) {
-      callback({})
+      callback(details.responseHeaders ? { responseHeaders: details.responseHeaders } : {})
       return
     }
     callback({

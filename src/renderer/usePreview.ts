@@ -115,6 +115,10 @@ export function usePreview() {
     onLoaded,
     onPlay: () => setPlaying(true),
     onPause: () => setPlaying(false),
-    onError: () => setError('This file could not be played.'),
+    onError: () => {
+      const code = audioRef.current?.error?.code
+      const reason = code === 1 ? 'aborted' : code === 2 ? 'network' : code === 3 ? 'decode' : code === 4 ? 'unsupported' : 'unknown'
+      setError(code ? `This file could not be played (${reason}, code ${code}).` : 'This file could not be played.')
+    },
   }
 }
