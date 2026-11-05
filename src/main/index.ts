@@ -19,13 +19,6 @@ import type { LibrarySnapshot, MenuCommand, SetDraft, SetFile } from '../shared/
 app.setName('sonic-match-studio')
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.sonicmatchstudio.desktop')
-  // The out-of-process Windows audio service writes one 1024-frame buffer
-  // (0.023s at 44.1 kHz) and then stops. The element stays unpaused, with
-  // readyState HAVE_ENOUGH_DATA, error null, and currentTime frozen there.
-  // The speaker meter stays at 0. In-process audio keeps the clock moving.
-  const disabled = app.commandLine.getSwitchValue('disable-features')
-  const audioFeatures = 'AudioServiceOutOfProcess,AudioServiceSandbox'
-  app.commandLine.appendSwitch('disable-features', disabled ? `${disabled},${audioFeatures}` : audioFeatures)
 }
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
@@ -232,6 +225,14 @@ function registerIpc(preview: PreviewServer): void {
     if (typeof filePath !== 'string') throw new Error('That track has no file.')
     if (!gate.resolve(filePath)) throw new Error('That file is not in the open folder or the open set.')
     return preview.urlFor(filePath)
+  })
+
+  ipcMain.handle('media:bytes', async (_event, filePath: unknown) => {
+    if (typeof filePath !== 'string') throw new Error('That track has no file.')
+    const resolved = gate.resolve(filePath)
+    if (!resolved) throw new Error('That file is not in the open folder or the open set.')
+    const file = await fs.promises.readFile(resolved)
+    return file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength)
   })
 }
 

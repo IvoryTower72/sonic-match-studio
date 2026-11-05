@@ -80,6 +80,7 @@ export interface SmsApi {
   saveAs(draft: SetDraft): Promise<SetFile>
   openSet(fileId: string): Promise<SetFile>
   mediaUrl(filePath: string): Promise<string>
+  mediaBytes(filePath: string): Promise<ArrayBuffer | Uint8Array>
   onScanProgress(listener: (progress: ScanProgress) => void): () => void
   onMenuCommand(listener: (command: MenuCommand) => void): () => void
 }

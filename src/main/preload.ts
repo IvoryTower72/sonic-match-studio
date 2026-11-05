@@ -18,6 +18,7 @@ const api = {
   saveAs: (draft: SetDraft): Promise<SetFile> => ipcRenderer.invoke('sets:save-as', draft),
   openSet: (fileId: string): Promise<SetFile> => ipcRenderer.invoke('sets:open', fileId),
   mediaUrl: (filePath: string): Promise<string> => ipcRenderer.invoke('media:url', filePath),
+  mediaBytes: (filePath: string): Promise<ArrayBuffer | Uint8Array> => ipcRenderer.invoke('media:bytes', filePath),
   onScanProgress: (listener: (progress: ScanProgress) => void): (() => void) => {
     const wrapped = (_event: IpcRendererEvent, progress: ScanProgress) => listener(progress)
     ipcRenderer.on('library:progress', wrapped)

@@ -12,18 +12,13 @@ interface TransportProps {
   duration: number
   volume: number
   error: string | null
+  status: string | null
   canSetReference: boolean
-  audioRef: RefObject<HTMLAudioElement | null>
   scrubbing: RefObject<boolean>
   onSetReference: () => void
   onToggle: () => void
   onSeek: (seconds: number) => void
   onVolume: (volume: number) => void
-  onPlay: () => void
-  onPause: () => void
-  onTimeUpdate: () => void
-  onLoaded: () => void
-  onError: () => void
 }
 
 export function Transport(props: TransportProps) {
@@ -51,7 +46,7 @@ export function Transport(props: TransportProps) {
         <span className="kicker">Preview</span>
         <div className="identity">
           <strong data-testid="preview-name">{previewName}</strong>
-          <span>{props.error ?? 'Does not change the set.'}</span>
+          <span>{props.error ?? props.status ?? 'Does not change the set.'}</span>
         </div>
         <button
           type="button"
@@ -79,7 +74,7 @@ export function Transport(props: TransportProps) {
           }}
           onChange={(event) => props.onSeek(Number(event.target.value))}
         />
-        <span className="time-readout" data-testid="preview-time">
+        <span className="time-readout" data-testid="preview-time" data-seconds={props.time.toFixed(3)}>
           {formatMediaClock(props.time)} / {formatMediaClock(props.duration)}
         </span>
         <label className="volume">
@@ -95,19 +90,6 @@ export function Transport(props: TransportProps) {
             onChange={(event) => props.onVolume(Number(event.target.value))}
           />
         </label>
-        <audio
-          ref={props.audioRef}
-          className="clip"
-          preload="auto"
-          controls
-          tabIndex={-1}
-          onPlay={props.onPlay}
-          onPause={props.onPause}
-          onEnded={props.onPause}
-          onTimeUpdate={props.onTimeUpdate}
-          onLoadedMetadata={props.onLoaded}
-          onError={props.onError}
-        />
       </div>
     </section>
   )

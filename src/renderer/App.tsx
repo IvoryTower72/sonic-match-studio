@@ -339,18 +339,13 @@ export function App() {
         duration={preview.duration}
         volume={preview.volume}
         error={preview.error}
+        status={preview.status}
         canSetReference={Boolean(anchor && library.tracks.some((track) => track.path === anchor))}
-        audioRef={preview.audioRef}
         scrubbing={preview.scrubbing}
         onSetReference={() => chooseReference()}
         onToggle={() => void togglePreview()}
         onSeek={preview.seek}
         onVolume={preview.setVolume}
-        onPlay={preview.onPlay}
-        onPause={preview.onPause}
-        onTimeUpdate={preview.onTimeUpdate}
-        onLoaded={preview.onLoaded}
-        onError={preview.onError}
       />
       <div className="workspace">
         <LibraryPane
