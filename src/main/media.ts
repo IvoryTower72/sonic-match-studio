@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 import type { MediaGate } from './access.js'
 import { parseByteRange } from './range.js'
 
@@ -33,8 +34,14 @@ export function pathFromMediaUrl(url: string): string | null {
 }
 
 /**
- * Serves one local audio file. The handle is opened read-only.
- * Range requests let the preview seek without loading a second copy of the file into the page.
+ * Serves one local audio file. The file is opened read-only and streamed.
+ *
+ * Chromium asks for `Range: bytes=0-` as soon as Play is pressed. The `play`
+ * event fires before any samples are decoded, which is what flips the button
+ * to Pause. A single ArrayBuffer of the whole file plays on Linux, but Windows
+ * does not decode that buffered custom-protocol body, so `currentTime` stays 0.
+ * A read-only stream with Content-Length and Content-Range is what the Windows
+ * media pipeline will actually advance.
  */
 export async function serveMedia(request: Request, gate: MediaGate): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -62,8 +69,7 @@ export async function serveMedia(request: Request, gate: MediaGate): Promise<Res
   if (!rangeHeader) {
     headers.set('Content-Length', String(size))
     if (request.method === 'HEAD') return new Response(null, { status: 200, headers })
-    const body = await readRange(real, 0, size - 1)
-    return new Response(body, { status: 200, headers })
+    return new Response(readOnlyBody(real, 0, size - 1), { status: 200, headers })
   }
 
   const range = parseByteRange(rangeHeader, size)
@@ -76,19 +82,18 @@ export async function serveMedia(request: Request, gate: MediaGate): Promise<Res
   headers.set('Content-Length', String(length))
   headers.set('Content-Range', `bytes ${range.start}-${range.end}/${size}`)
   if (request.method === 'HEAD') return new Response(null, { status: 206, headers })
-  const body = await readRange(real, range.start, range.end)
-  return new Response(body, { status: 206, headers })
+  return new Response(readOnlyBody(real, range.start, range.end), { status: 206, headers })
 }
 
-async function readRange(filePath: string, start: number, end: number): Promise<ArrayBuffer> {
-  if (end < start) return new ArrayBuffer(0)
-  const length = end - start + 1
-  const handle = await fs.promises.open(filePath, 'r')
-  try {
-    const buffer = Buffer.alloc(length)
-    await handle.read(buffer, 0, length, start)
-    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
-  } finally {
-    await handle.close()
+/** Bytes from `start` through `end`, inclusive. The file is never opened for writing. */
+function readOnlyBody(filePath: string, start: number, end: number): ReadableStream<Uint8Array> {
+  if (end < start) {
+    return new ReadableStream({
+      start(controller) {
+        controller.close()
+      },
+    })
   }
+  const nodeStream = fs.createReadStream(filePath, { start, end, flags: 'r' })
+  return Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>
 }
