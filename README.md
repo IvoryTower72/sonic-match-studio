@@ -47,7 +47,7 @@ Saved sets are JSON files in Electron’s user-data folder, under `sets`. Save o
 - Left: the folder you opened, and the saved sets. A larger library is not in this window yet.
 - Centre: search, sort, and a track list with title, artist, BPM, key, energy, duration, and an empty Match column.
 - Right: target time, full-file total, remaining time, overtime, and the ordered set. Drag a track in. The times update. Overtime is allowed and stays visible.
-- Top: the current reference, and preview with play, pause, seek, and volume. Those stay visible. Preview play, pause, seek, and volume go to a player outside the page. On Windows that player is the Windows multimedia interface, not Chromium.
+- Top: the current reference, and preview with play, pause, seek, and volume. Those stay visible. Preview play, pause, seek, and volume go to a player outside the page. On Windows that player is the Windows multimedia interface, not Chromium. Pause holds the position, and Play continues from there.
 - Full-file totals are labelled as an estimate. They are not the time the set will run live.
 - Set reference is its own action. Changing the reference does not reorder the set. Preview does not either.
 - Removing a track takes it out of the set. The audio file stays where it is.

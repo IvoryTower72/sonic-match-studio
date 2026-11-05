@@ -35,8 +35,11 @@ test('windows playback commands open the file read-only and seek without a page 
   await player.seek(4.2)
   assert.equal(log.at(-1), 'play smspreview from 4200')
   await player.pause()
-  const paused = log.filter((command) => command.startsWith('pause '))
-  assert.equal(paused.length, 1)
+  assert.equal(log.some((command) => command === 'stop smspreview'), true)
+  assert.equal(log.some((command) => command.startsWith('pause ')), false)
+  const held = await player.status()
+  assert.equal(held.playing, false)
+  assert.equal(held.position, 2.5)
   await player.volume(0.4)
   assert.equal(log.at(-1), 'setaudio smspreview volume to 400')
   const wav = new MciController(send)
@@ -45,6 +48,51 @@ test('windows playback commands open the file read-only and seek without a page 
   assert.match(wavOpen ?? '', /type waveaudio alias smspreview$/)
   await player.close()
   assert.equal(log.at(-1), 'close smspreview')
+})
+
+test('winmm pause holds the position after stop resets the device, and play continues there', async () => {
+  let deviceMs = 18000
+  let mode = 'playing'
+  const log: string[] = []
+  const send = async (command: string) => {
+    log.push(command)
+    if (command.endsWith(' length')) return '498939'
+    if (command.endsWith(' mode')) return mode
+    if (command.endsWith(' position')) return String(deviceMs)
+    if (command.startsWith('stop ')) {
+      mode = 'stopped'
+      deviceMs = 0
+      return ''
+    }
+    if (command.startsWith('play ') && command.includes(' from ')) {
+      mode = 'playing'
+      deviceMs = Number(command.split(' from ')[1])
+      return ''
+    }
+    if (command.startsWith('play ')) {
+      mode = 'playing'
+      return ''
+    }
+    if (command.startsWith('window ') || command.startsWith('setaudio ')) throw new Error('unsupported')
+    return ''
+  }
+  const player = new MciController(send)
+  await player.load('C:\\Music\\Otam.mp3', 498.939)
+  await player.play()
+  const paused = await player.pause()
+  assert.equal(paused.playing, false)
+  assert.equal(paused.position, 18)
+  assert.equal(deviceMs, 0)
+  assert.equal((await player.status()).position, 18)
+  assert.equal((await player.status()).playing, false)
+  const resumed = await player.play()
+  assert.equal(resumed.playing, true)
+  assert.equal(resumed.position, 18)
+  assert.equal(log.at(-1), 'play smspreview from 18000')
+  deviceMs = 0
+  const duringSeek = await player.status()
+  assert.equal(duringSeek.position, 18)
+  assert.equal(duringSeek.playing, true)
 })
 
 test('ffmpeg preview reads a real file and the clock moves, then pause holds', async (t) => {

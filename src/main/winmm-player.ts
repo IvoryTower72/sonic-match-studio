@@ -133,12 +133,23 @@ export function startWinmmBridge(): Promise<WinmmBridge> {
   }))
 }
 
-/** MCI command sequence. `send` returns the text winmm wrote back. */
+function leadingNumber(text: string): number {
+  const match = text.match(/-?\d+/)
+  return match ? Number(match[0]) : Number.NaN
+}
+
+/**
+ * MCI command sequence. `send` returns the text winmm wrote back.
+ * MP3 is opened as mpegvideo, which rejects `pause` and reports position 0 after `stop`.
+ * The held position is what Play resumes from.
+ */
 export class MciController {
   private opened = false
   private durationMs = 0
   private positionMs = 0
   private playing = false
+  private held = false
+  private awaitDevice = false
 
   constructor(
     private readonly send: (command: string) => Promise<string>,
@@ -158,23 +169,36 @@ export class MciController {
     this.durationMs = Number.isFinite(length) && length > 0 ? length : Math.round(Math.max(0, durationHint) * 1000)
     this.positionMs = 0
     this.playing = false
+    this.held = false
+    this.awaitDevice = false
     return this.snapshot()
   }
 
   async play(): Promise<PreviewStatus> {
     this.requireOpen()
     if (this.durationMs > 0 && this.positionMs >= this.durationMs - 50) this.positionMs = 0
-    if (this.positionMs > 0) await this.send(`play ${ALIAS} from ${this.positionMs}`)
-    else await this.send(`play ${ALIAS}`)
+    const from = this.positionMs
+    this.held = false
     this.playing = true
+    this.awaitDevice = from > 0
+    if (from > 0) await this.send(`play ${ALIAS} from ${from}`)
+    else await this.send(`play ${ALIAS}`)
     return this.snapshot()
   }
 
   async pause(): Promise<PreviewStatus> {
     this.requireOpen()
-    await this.send(`pause ${ALIAS}`)
-    this.positionMs = await this.readPosition()
+    if (this.held && !this.playing) return this.snapshot()
+    this.held = true
     this.playing = false
+    this.awaitDevice = false
+    try {
+      const position = await this.readPosition()
+      if (Number.isFinite(position)) this.positionMs = position
+    } catch {
+      // Keep the last position the card already showed.
+    }
+    await this.send(`stop ${ALIAS}`)
     return this.snapshot()
   }
 
@@ -182,8 +206,13 @@ export class MciController {
     this.requireOpen()
     const ms = this.clampMs(seconds)
     this.positionMs = ms
-    if (this.playing) await this.send(`play ${ALIAS} from ${ms}`)
-    else await this.send(`seek ${ALIAS} to ${ms}`)
+    if (this.playing) {
+      this.awaitDevice = ms > 0
+      await this.send(`play ${ALIAS} from ${ms}`)
+    } else {
+      this.held = true
+      await this.send(`seek ${ALIAS} to ${ms}`)
+    }
     return this.snapshot()
   }
 
@@ -194,10 +223,17 @@ export class MciController {
   }
 
   async status(): Promise<PreviewStatus> {
-    if (!this.opened) return this.snapshot()
-    this.positionMs = await this.readPosition()
+    if (!this.opened || this.held) return this.snapshot()
+    const position = await this.readPosition()
+    if (this.held) return this.snapshot()
     const mode = (await this.send(`status ${ALIAS} mode`)).trim().toLowerCase()
-    this.playing = mode === 'playing'
+    if (this.held) return this.snapshot()
+    const deviceBehind = this.awaitDevice && Number.isFinite(position) && position + 250 < this.positionMs
+    if (!deviceBehind && Number.isFinite(position)) {
+      this.positionMs = position
+      this.awaitDevice = false
+    }
+    if (!this.awaitDevice) this.playing = mode === 'playing'
     return this.snapshot()
   }
 
@@ -206,8 +242,7 @@ export class MciController {
   }
 
   private async readPosition(): Promise<number> {
-    const value = Number(await this.send(`status ${ALIAS} position`))
-    return Number.isFinite(value) ? value : this.positionMs
+    return leadingNumber(await this.send(`status ${ALIAS} position`))
   }
 
   private clampMs(seconds: number): number {
