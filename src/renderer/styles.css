@@ -511,12 +511,17 @@ tr.reference.previewing td { box-shadow: inset 3px 0 0 var(--sage), inset 6px 0 
 
 .missing { color: var(--over); }
 
+/* Without controls, Chromium forces display:none. Windows then writes one
+   audio buffer and stops the clock. Keep a real box and hide the native widget. */
 .clip {
   position: absolute;
-  width: 1px;
-  height: 1px;
+  top: 0;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  opacity: 0;
+  pointer-events: none;
   overflow: hidden;
-  clip: rect(0 0 0 0);
 }
 
 .notice {

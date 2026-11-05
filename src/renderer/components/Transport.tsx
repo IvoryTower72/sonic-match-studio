@@ -99,6 +99,8 @@ export function Transport(props: TransportProps) {
           ref={props.audioRef}
           className="clip"
           preload="auto"
+          controls
+          tabIndex={-1}
           onPlay={props.onPlay}
           onPause={props.onPause}
           onEnded={props.onPause}
