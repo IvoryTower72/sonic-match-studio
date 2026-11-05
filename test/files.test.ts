@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
+import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { MediaGate, isInside } from '../src/main/access.ts'
 import { scanLibrary } from '../src/main/library.ts'
 import { mediaUrlFor, pathFromMediaUrl, serveMedia } from '../src/main/media.ts'
+import { startPreviewServer } from '../src/main/preview-server.ts'
 import { createSet, listSets, overwriteSet, readSet } from '../src/main/sets.ts'
 import { sampleTrack } from './sample.ts'
 
@@ -108,6 +110,42 @@ test('media urls round-trip and ranges are read without writing the file', async
   fs.rmSync(outside, { force: true })
 })
 
+test('preview http on 127.0.0.1 returns the file bytes and does not write them', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sms-http-'))
+  const nested = path.join(directory, 'New folder (4)', 'Otam (original mix).mp3')
+  fs.mkdirSync(path.dirname(nested), { recursive: true })
+  const bytes = Buffer.from('0123456789abcdef-preview-bytes')
+  fs.writeFileSync(nested, bytes)
+  const before = hash(nested)
+  const outside = path.join(os.tmpdir(), `sms-http-outside-${process.pid}.mp3`)
+  fs.writeFileSync(outside, 'secret')
+  const gate = new MediaGate()
+  gate.setRoot(directory)
+  const server = await startPreviewServer(gate)
+  try {
+    const url = new URL(server.urlFor(nested))
+    assert.equal(url.hostname, '127.0.0.1')
+    assert.match(url.pathname, /^\/track\//)
+    const partial = await requestPreview(url, { Range: 'bytes=0-3' })
+    assert.equal(partial.status, 206)
+    assert.equal(partial.headers['content-type'], 'audio/mpeg')
+    assert.equal(partial.headers['accept-ranges'], 'bytes')
+    assert.equal(partial.headers['content-length'], '4')
+    assert.equal(partial.body.toString(), '0123')
+    const whole = await requestPreview(url, {})
+    assert.equal(whole.status, 200)
+    assert.equal(whole.headers['content-length'], String(bytes.length))
+    assert.equal(whole.body.compare(bytes), 0)
+    const denied = await requestPreview(new URL(server.urlFor(outside)), {})
+    assert.equal(denied.status, 404)
+  } finally {
+    await server.close()
+  }
+  assert.equal(hash(nested), before)
+  fs.rmSync(directory, { recursive: true, force: true })
+  fs.rmSync(outside, { force: true })
+})
+
 test('a folder scan keeps audio inside the folder and skips a link that points out', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sms-scan-'))
   const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sms-linked-'))
@@ -128,4 +166,22 @@ test('a folder scan keeps audio inside the folder and skips a link that points o
 
 function hash(filePath: string): string {
   return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
+}
+
+function requestPreview(url: URL, headers: http.OutgoingHttpHeaders): Promise<{ status: number, headers: http.IncomingHttpHeaders, body: Buffer }> {
+  return new Promise((resolve, reject) => {
+    const request = http.request(url, { headers }, (response) => {
+      const chunks: Buffer[] = []
+      response.on('data', (chunk: Buffer) => chunks.push(chunk))
+      response.on('end', () => {
+        resolve({
+          status: response.statusCode ?? 0,
+          headers: response.headers,
+          body: Buffer.concat(chunks),
+        })
+      })
+    })
+    request.on('error', reject)
+    request.end()
+  })
 }

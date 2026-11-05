@@ -7,28 +7,14 @@ import {
   dialog,
   ipcMain,
   Menu,
-  protocol,
   session,
   type MenuItemConstructorOptions,
 } from 'electron'
 import { MediaGate } from './access.js'
 import { refreshSavedTracks, scanLibrary } from './library.js'
-import { mediaUrlFor, serveMedia } from './media.js'
+import { startPreviewServer, type PreviewServer } from './preview-server.js'
 import { createSet, listSets, overwriteSet, readSet } from './sets.js'
 import type { LibrarySnapshot, MenuCommand, SetDraft, SetFile } from '../shared/types.js'
-
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: 'sms',
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      stream: true,
-      corsEnabled: true,
-    },
-  },
-])
 
 app.setName('sonic-match-studio')
 if (process.platform === 'win32') {
@@ -42,6 +28,7 @@ const rendererHtml = path.join(appRoot, 'dist/renderer/index.html')
 const isDev = process.argv.includes('--dev')
 
 const gate = new MediaGate()
+let previewServer: PreviewServer | null = null
 let windowRef: BrowserWindow | null = null
 let setsDirectory = ''
 let userData = ''
@@ -96,11 +83,15 @@ async function openLibrary(folder: string): Promise<LibrarySnapshot> {
   return snapshot
 }
 
-function installContentSecurityPolicy(): void {
+function installContentSecurityPolicy(previewOrigin: string): void {
   const policy = isDev
-    ? "default-src 'self' http://127.0.0.1:5173; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://127.0.0.1:5173; style-src 'self' 'unsafe-inline' http://127.0.0.1:5173; connect-src 'self' ws://127.0.0.1:5173 http://127.0.0.1:5173; media-src 'self' sms: http://127.0.0.1:5173; img-src 'self' data:"
-    : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self' sms:; img-src 'self' data:"
+    ? `default-src 'self' http://127.0.0.1:5173; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://127.0.0.1:5173; style-src 'self' 'unsafe-inline' http://127.0.0.1:5173; connect-src 'self' ws://127.0.0.1:5173 http://127.0.0.1:5173; media-src 'self' ${previewOrigin} http://127.0.0.1:5173; img-src 'self' data:`
+    : `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self' ${previewOrigin}; img-src 'self' data:`
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    if (details.url.startsWith(previewOrigin)) {
+      callback({})
+      return
+    }
     callback({
       responseHeaders: {
         ...details.responseHeaders,
@@ -179,7 +170,7 @@ function createWindow(): BrowserWindow {
   return win
 }
 
-function registerIpc(): void {
+function registerIpc(preview: PreviewServer): void {
   ipcMain.handle('app:load', async () => {
     await startupScan
     return {
@@ -233,16 +224,16 @@ function registerIpc(): void {
   ipcMain.handle('media:url', async (_event, filePath: unknown) => {
     if (typeof filePath !== 'string') throw new Error('That track has no file.')
     if (!gate.resolve(filePath)) throw new Error('That file is not in the open folder or the open set.')
-    return mediaUrlFor(filePath)
+    return preview.urlFor(filePath)
   })
 }
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   userData = app.getPath('userData')
   setsDirectory = path.join(userData, 'sets')
-  protocol.handle('sms', (request) => serveMedia(request, gate))
-  installContentSecurityPolicy()
-  registerIpc()
+  previewServer = await startPreviewServer(gate)
+  installContentSecurityPolicy(previewServer.origin)
+  registerIpc(previewServer)
 
   const requested = cliFlag('--library') ?? readSavedFolder() ?? process.env.SMS_LIBRARY ?? null
   if (requested && fs.existsSync(requested)) {
@@ -262,4 +253,8 @@ void app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   app.quit()
+})
+
+app.on('will-quit', () => {
+  void previewServer?.close().catch(() => undefined)
 })

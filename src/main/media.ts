@@ -34,14 +34,13 @@ export function pathFromMediaUrl(url: string): string | null {
 }
 
 /**
- * Serves one local audio file. The file is opened read-only and streamed.
+ * Builds the read-only response for one audio file.
  *
- * Chromium asks for `Range: bytes=0-` as soon as Play is pressed. The `play`
- * event fires before any samples are decoded, which is what flips the button
- * to Pause. A single ArrayBuffer of the whole file plays on Linux, but Windows
- * does not decode that buffered custom-protocol body, so `currentTime` stays 0.
- * A read-only stream with Content-Length and Content-Range is what the Windows
- * media pipeline will actually advance.
+ * The `sms://track/` URL is only the token shape used here. Windows Chromium
+ * reads the duration from a custom protocol and then does not decode it: Play
+ * shows Pause, the clock stays 0:00, and the speaker meter stays at 0. The
+ * window plays the same bytes over `http://127.0.0.1`, which is the pipeline
+ * Chromium actually decodes. The file is opened read-only.
  */
 export async function serveMedia(request: Request, gate: MediaGate): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -64,6 +63,7 @@ export async function serveMedia(request: Request, gate: MediaGate): Promise<Res
     'Accept-Ranges': 'bytes',
     'Content-Type': mime,
     'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
   })
 
   if (!rangeHeader) {
